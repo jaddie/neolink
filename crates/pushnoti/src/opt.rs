@@ -11,6 +11,8 @@ use std::str::FromStr;
 pub struct Opt {
     #[arg(short, long, value_parser = PathBuf::from_str)]
     pub config: Option<PathBuf>,
+    #[arg(long)]
+    pub register_only: bool,
     /// The name of the camera. Must be a name in the config
-    pub camera: String,
+    pub camera: Option<String>,
 }

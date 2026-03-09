@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use fcm_push_listener::*;
 use log::*;
 use std::{fs, path::PathBuf};
+use tokio::io::AsyncWriteExt;
+use tokio_stream::StreamExt;
 use validator::Validate;
 
 mod config;
@@ -19,7 +20,39 @@ async fn main() -> Result<()> {
 
     let opt = Opt::parse();
 
+    let firebase_app_id = "1:743639030586:android:86f60a4fb7143876";
+    let firebase_project_id = "reolink-login";
+    let firebase_api_key = "AIzaSyBEUIuWHnnOEwFahxWgQB4Yt4NsgOmkPyE";
+    let http = reqwest::Client::new();
+
+    let token_path = PathBuf::from("./token.toml");
+    let mut registration = if let Ok(Ok(registration)) = fs::read_to_string(&token_path)
+        .map(|v| toml::from_str::<fcm_push_listener::Registration>(&v))
+    {
+        info!("Loaded token");
+        registration
+    } else {
+        info!("Registering new token");
+        let registration = fcm_push_listener::register(
+            &http,
+            firebase_app_id,
+            firebase_project_id,
+            firebase_api_key,
+            None,
+        )
+        .await?;
+        let new_token = toml::to_string(&registration)?;
+        fs::write(&token_path, new_token)?;
+        registration
+    };
+
+    if opt.register_only {
+        info!("registration.fcm_token: {}", registration.fcm_token);
+        return Ok(());
+    }
+
     let conf_path = opt.config.context("Must supply --config file")?;
+    let camera_name = opt.camera.context("Must supply camera name")?;
     let config: Config = toml::from_str(
         &fs::read_to_string(&conf_path)
             .with_context(|| format!("Failed to read {:?}", conf_path))?,
@@ -30,48 +63,7 @@ async fn main() -> Result<()> {
         .validate()
         .with_context(|| format!("Failed to validate the {:?} config file", conf_path))?;
 
-    let camera = find_and_connect(&config, &opt.camera).await?;
-
-    // 696841269229 is the reo_iphone FCM Sender_ID
-    // let registration = fcm_push_listener::register("696841269229").await?;
-    // 743639030586 is the reo_fcm FCM Sender_ID
-    // 263684512460 is my test Sender_ID
-    // let registration = fcm_push_listener::register("743639030586").await?
-    // I have confirmed that I can recieve test messages with this SenderID
-    // into this program
-    // let registration = fcm_push_listener::register("263684512460").await?;
-
-    // let firebase_app_id = "1:743639030586:android:86f60a4fb7143876";
-    // let firebase_project_id = "reolink-login";
-    // let firebase_api_key = "AIzaSyBEUIuWHnnOEwFahxWgQB4Yt4NsgOmkPyE";
-    // let vapid_key = "";
-
-    let sender_id = "743639030586"; // andriod
-
-    // let sender_id = "696841269229"; // ios
-
-    // let sender_id = "263684512460"; // test
-
-    let token_path = PathBuf::from("./token.toml");
-    let registration = if let Ok(Ok(registration)) =
-        fs::read_to_string(&token_path).map(|v| toml::from_str::<Registration>(&v))
-    {
-        info!("Loaded token");
-        registration
-    } else {
-        info!("Registering new token");
-        let registration = fcm_push_listener::register(sender_id).await?;
-        // let registration = fcm_push_listener::register(
-        //     firebase_app_id,
-        //     firebase_project_id,
-        //     firebase_api_key,
-        //     vapid_key,
-        // )
-        // .await?;
-        let new_token = toml::to_string(&registration)?;
-        fs::write(token_path, new_token)?;
-        registration
-    };
+    let camera = find_and_connect(&config, &camera_name).await?;
 
     // Send registration.fcm_token to the server to allow it to send push messages to you.
     info!("registration.fcm_token: {}", registration.fcm_token);
@@ -81,14 +73,29 @@ async fn main() -> Result<()> {
         .await?;
 
     info!("Listening");
-    let mut listener = FcmPushListener::create(
-        registration,
-        |message: FcmMessage| {
-            info!("Message JSON: {}", message.payload_json);
-            info!("Persistent ID: {:?}", message.persistent_id);
-        },
-        vec![],
-    );
-    listener.connect().await?;
+    let session = registration.gcm.checkin(&http).await?;
+    if session.changed(&registration.gcm) {
+        registration.gcm = (*session).clone();
+        fs::write(&token_path, toml::to_string(&registration)?)?;
+    }
+
+    let connection = session.new_connection(vec![]).await?;
+    let mut stream = fcm_push_listener::MessageStream::wrap(connection, &registration.keys);
+    while let Some(message) = stream.next().await {
+        match message? {
+            fcm_push_listener::Message::Data(message) => {
+                info!("Message JSON: {}", String::from_utf8_lossy(&message.body));
+                info!("Persistent ID: {:?}", message.persistent_id);
+            }
+            fcm_push_listener::Message::HeartbeatPing => {
+                stream
+                    .write_all(&fcm_push_listener::new_heartbeat_ack())
+                    .await?;
+            }
+            fcm_push_listener::Message::Other(tag, bytes) => {
+                debug!("Got non-data message: {}, {} bytes", tag, bytes.len());
+            }
+        }
+    }
     Ok(())
 }

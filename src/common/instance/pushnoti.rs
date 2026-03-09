@@ -23,24 +23,27 @@ impl NeoInstance {
         let (fwatch_tx, fwatch_rx) = watch(None);
         tokio::task::spawn(async move {
             loop {
-                match source_watch
-                    .wait_for(|i| {
+                tokio::select! {
+                    _ = fwatch_tx.closed() => {
+                        break AnyResult::Ok(());
+                    }
+                    v = source_watch.wait_for(|i| {
                         fwatch_tx.borrow().as_ref() != i.as_ref()
                             && i.as_ref()
                                 .is_some_and(|i| i.message.contains(&format!("\"{uid}\"")))
-                    })
-                    .await
-                {
-                    Ok(pn) => {
-                        log::trace!("Forwarding push notification about {}", uid);
-                        let _ = fwatch_tx.send_replace(pn.clone());
-                    }
-                    Err(e) => {
-                        break Err(e);
+                    }) => {
+                        match v {
+                            Ok(pn) => {
+                                log::trace!("Forwarding push notification about {}", uid);
+                                let _ = fwatch_tx.send_replace(pn.clone());
+                            }
+                            Err(e) => {
+                                break Err(e.into());
+                            }
+                        }
                     }
                 }
-            }?;
-            AnyResult::Ok(())
+            }
         });
 
         Ok(fwatch_rx)

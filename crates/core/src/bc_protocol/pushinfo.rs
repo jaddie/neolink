@@ -55,6 +55,7 @@ impl BcCamera {
                         token: token.to_owned(),
                         phone_type: phone_type_str.to_owned(),
                         client_id: client_id.to_owned(),
+                        ..Default::default()
                     }),
                     ..Default::default()
                 })),

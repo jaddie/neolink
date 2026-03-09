@@ -798,8 +798,11 @@ pub struct AbilityInfoSubModule {
 }
 
 /// PushInfo XML
-#[derive(PartialEq, Eq, Default, Debug, Deserialize, Serialize)]
+#[derive(PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct PushInfo {
+    /// The xml version, observed as `1.1`
+    #[serde(rename = "@version")]
+    pub version: String,
     /// The token from FCM registration
     pub token: String,
     /// The phone type, known values: `reo_iphone`
@@ -808,6 +811,17 @@ pub struct PushInfo {
     /// A client ID, seems to be an all CAPS MD5 hash of something
     #[serde(rename = "clientID")]
     pub client_id: String,
+}
+
+impl Default for PushInfo {
+    fn default() -> Self {
+        Self {
+            version: xml_ver(),
+            token: String::new(),
+            phone_type: String::new(),
+            client_id: String::new(),
+        }
+    }
 }
 
 /// The Link Type contains the type of connection present
@@ -1706,6 +1720,37 @@ fn test_login_ser() {
             version: "1.1".to_string(),
             type_: "LAN".to_string(),
             udp_port: 0,
+        }),
+        ..BcXml::default()
+    };
+
+    let b2 = BcXml::try_parse(sample.as_bytes()).unwrap();
+    let b3 = BcXml::try_parse(b.serialize(vec![]).unwrap().as_ref()).unwrap();
+    assert_eq!(b, b2);
+    assert_eq!(b, b3);
+    assert_eq!(b2, b3);
+}
+
+#[test]
+fn test_pushinfo_ser() {
+    let sample = indoc!(
+        r#"
+        <?xml version="1.0" encoding="UTF-8" ?>
+        <body>
+        <PushInfo version="1.1">
+        <token>TOKEN_FROM_FCM</token>
+        <phoneType>reo_fcm</phoneType>
+        <clientID>PUSH_CLIENT_ID</clientID>
+        </PushInfo>
+        </body>"#
+    );
+
+    let b = BcXml {
+        push_info: Some(PushInfo {
+            token: "TOKEN_FROM_FCM".to_string(),
+            phone_type: "reo_fcm".to_string(),
+            client_id: "PUSH_CLIENT_ID".to_string(),
+            ..Default::default()
         }),
         ..BcXml::default()
     };
