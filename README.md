@@ -239,6 +239,9 @@ Status Messages:
   of the battery status
 - `/status/battery_level` A simple % value of current battery level, only
   published when `enable_battery` is true in the config
+- `/status/notification` The raw push notification payload from the camera.
+  This is useful for Home Assistant or other MQTT automations that only care
+  about doorbell, PIR, or motion events
 - `/status/pir` Sent in reply to a `/query/pir` an XML encoded version of the
   pir status
 - `/status/motion` Contains the motion detection alarm status. `on` for motion
@@ -455,10 +458,6 @@ after it stops being used.
 Neolink considers it as being used if there is an active stream running, or
 if there is motion being detected or an mqtt command being run
 
-[Because google remove the api for the push notifications we cannot
-reliably use push notifications to wake up, so motion won't wake
-up neolink anymore]
-
 You can make neolink stop active streams when there are no rtsp clients using
 
 ```toml
@@ -469,11 +468,14 @@ You can make neolink stop active streams when there are no rtsp clients using
 Once in the disconnected state. Neolink will stay disconnected until there is a
 new requested activation such as a client connecting or an mqtt command
 
-~Neolink will also wake up on push notifications from the camera. These are usually
-sent by the camera on motion or PIR alarms. To disable this you can set
-`push_notifications = false` in the `[[cameras]]` config~
+Neolink can also wake up on push notifications from the camera. These are
+usually sent on motion, PIR, or doorbell events. To disable this, set
+`push_notifications = false` in the `[[cameras]]` config.
 
-[Google removed the apis we were using for push notifications]
+If you only want automation events and do not need RTSP, run `neolink mqtt`
+instead of `neolink rtsp` or `neolink mqtt-rtsp`. In that mode, Home Assistant
+can subscribe to `neolink/{CAMERANAME}/status/notification` and trigger
+automations from the raw payload.
 
 ### Docker
 
@@ -492,6 +494,16 @@ docker pull quantumentangledandy/neolink
 # and you can ommit this option. Not all OSes support
 # network=host, notably macos lacks this option.
 docker run --network host --volume=$PWD/config.toml:/etc/neolink.toml quantumentangledandy/neolink
+```
+
+If you only want MQTT and push notifications, set `NEO_LINK_MODE=mqtt`:
+
+```bash
+docker run \
+  --network host \
+  -e NEO_LINK_MODE=mqtt \
+  --volume=$PWD/config.toml:/etc/neolink.toml \
+  quantumentangledandy/neolink
 ```
 
 #### Environmental Variables
