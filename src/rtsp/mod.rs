@@ -82,6 +82,13 @@ use gst::NeoRtspServer;
 
 type AnyResult<T> = anyhow::Result<T, anyhow::Error>;
 
+fn reap_joinset(set: &mut JoinSet<AnyResult<()>>) -> AnyResult<()> {
+    while let Some(joined) = set.try_join_next() {
+        joined??;
+    }
+    Ok(())
+}
+
 /// Entry point for the rtsp subcommand
 ///
 /// Opt is the command line options
@@ -155,6 +162,7 @@ pub(crate) async fn main(_opt: Opt, reactor: NeoReactor) -> Result<()> {
                 let mut cameras: HashMap<String, CancellationToken> = Default::default();
                 let mut config_names = HashSet::new();
                 loop {
+                    reap_joinset(&mut set)?;
                     config_names = thread_config.wait_for(|config| {
                         let current_names = config.cameras.iter().filter(|a| a.enabled).map(|cam_config| cam_config.name.clone()).collect::<HashSet<_>>();
                         current_names != config_names
@@ -184,11 +192,14 @@ pub(crate) async fn main(_opt: Opt, reactor: NeoReactor) -> Result<()> {
                         }
                     }
 
-                    for (running_name, token) in cameras.iter() {
-                        if ! config_names.contains(running_name) {
+                    cameras.retain(|running_name, token| {
+                        let keep = config_names.contains(running_name);
+                        if !keep {
                             token.cancel();
                         }
-                    }
+                        keep
+                    });
+                    reap_joinset(&mut set)?;
                 }
             } => v,
         }

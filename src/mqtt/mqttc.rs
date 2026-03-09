@@ -190,6 +190,7 @@ impl<'a> MqttBackend<'a> {
         log::debug!("MQTT Published Startup");
         let loop_cancel = CancellationToken::new();
         let _drop_guard = loop_cancel.clone().drop_guard();
+        let mut workers = JoinSet::<AnyResult<()>>::new();
         loop {
             let r = tokio::select! {
                 v = self.outgoing_rx.recv() => {
@@ -202,7 +203,7 @@ impl<'a> MqttBackend<'a> {
                     let cancel = self.cancel.clone();
                     let thread_cancel = loop_cancel.clone();
                     let server_config = self.config.clone();
-                    tokio::task::spawn(async move {
+                    workers.spawn(async move {
                         tokio::select!{
                             _ = cancel.cancelled() => AnyResult::Ok(()),
                             _ = thread_cancel.cancelled() => AnyResult::Ok(()),
@@ -285,7 +286,7 @@ impl<'a> MqttBackend<'a> {
                     let incomming_tx = self.incomming_tx.clone();
                     let cancel = self.cancel.clone();
                     let thread_cancel = loop_cancel.clone();
-                    tokio::task::spawn(async move {
+                    workers.spawn(async move {
                         tokio::select!{
                             _ = cancel.cancelled() => AnyResult::Ok(()),
                             _ = thread_cancel.cancelled() => AnyResult::Ok(()),
@@ -328,6 +329,15 @@ impl<'a> MqttBackend<'a> {
                         }
                     });
                     AnyResult::Ok(())
+                },
+                v = workers.join_next(), if !workers.is_empty() => {
+                    match v {
+                        Some(joined) => {
+                            joined??;
+                            AnyResult::Ok(())
+                        }
+                        None => AnyResult::Ok(()),
+                    }
                 },
             };
             if r.is_ok() {
