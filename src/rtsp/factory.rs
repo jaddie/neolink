@@ -951,13 +951,13 @@ fn make_queue(name: &str, buffer_size: u32) -> AnyResult<Element> {
     queue.set_property("max-size-time", 0u64);
     queue.set_property(
         "max-size-time",
-        std::convert::TryInto::<u64>::try_into(tokio::time::Duration::from_secs(5).as_nanos())
+        std::convert::TryInto::<u64>::try_into(tokio::time::Duration::from_secs(15).as_nanos())
             .unwrap_or(0),
     );
     Ok(queue)
 }
 
 fn buffer_size(bitrate: u32) -> u32 {
-    // 0.1 seconds (according to bitrate) or 4kb what ever is larger
-    std::cmp::max(bitrate * 2 / 8u32, 4u32 * 1024u32)
+    // Keep roughly 6 seconds of media queued to smooth relay/mobile jitter.
+    std::cmp::max(bitrate * 6 / 8u32, 4u32 * 1024u32)
 }
